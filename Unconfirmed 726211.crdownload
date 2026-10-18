@@ -1,0 +1,31 @@
+// Run: node tests/supabase-config-test.js
+// Tests the Supabase settings guard and the connection check with FAKE Supabase responses.
+// It does NOT talk to your real Supabase project (no internet is used).
+const fs=require('fs'),path=require('path');
+const html=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
+const code=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].pop()[1];
+const mk=()=>new Proxy(function(){},{get:(t,k)=>k===Symbol.toPrimitive?()=>'':k==='length'?0:['innerHTML','textContent','value','src'].includes(k)?'':k==='dataset'?{}:mk(),set:()=>true,apply:()=>mk()});
+const store={},ls={getItem:k=>store[k]??null,setItem:(k,v)=>{store[k]=v},removeItem:k=>{delete store[k]}};
+const win={addEventListener(){},matchMedia:()=>({matches:false,addEventListener(){}}),location:{hash:'',protocol:'https:'},scrollTo(){},innerWidth:400,navigator:{},HIGHWAY_ENV:{SUPABASE_URL:'',SUPABASE_PUBLISHABLE_KEY:'sb_publishable_TESTKEY0000000000'}};
+const tests=String.raw`
+;(async()=>{
+ const show=(t,r)=>console.log('\n'+t+'\n'+r.map(x=>(x.ok?'  ok  ':'  FIX ')+x.name+(x.note?'  -> '+x.note:'')).join('\n'));
+ // 1. URL missing
+ show('1. URL missing',await sbCheck());
+ // 2. a secret key must be refused
+ SB_ENV.SUPABASE_URL='https://abcdxyz.supabase.co';SB_ENV.SUPABASE_PUBLISHABLE_KEY='sb_secret_FAKE';
+ show('2. secret key in settings',await sbCheck());
+ let made=0;try{await sbClient();}catch(e){console.log('   sbClient() refuses secret key ->',e.message)}
+ // 3. good settings, fake server: phone off, one table missing, rest found
+ SB_ENV.SUPABASE_PUBLISHABLE_KEY='sb_publishable_TESTKEY0000000000';
+ global.fetch=async(u,o)=>({ok:true,status:200,json:async()=>({external:{phone:false}})});
+ window.supabase={createClient:(u,k)=>{made++;return{from:tb=>({select:()=>({limit:async()=>tb==='orders'?{error:{code:'PGRST205',message:'x'}}:{error:null}})})}}};
+ show('3. fake server: phone off, orders table missing',await sbCheck());
+ // 4. server rejects the key
+ global.fetch=async()=>({ok:false,status:401,json:async()=>({})});
+ show('4. key rejected (HTTP 401)',await sbCheck());
+ console.log('\nclient created '+made+' time(s) (expected 1: it is reused)');
+})();
+`;
+global.window=win;
+new Function('window','document','localStorage','navigator','location','history','setTimeout','setInterval','requestAnimationFrame','Intl',code+tests)(win,mk(),ls,{onLine:true,userAgent:''},win.location,{},()=>0,()=>0,()=>0,Intl);

@@ -1,0 +1,34 @@
+// Run:  node tests/logic-smoke-test.js
+// Loads ../index.html's script with a fake DOM (no browser) and runs the core business logic.
+// It proves the LOGIC runs. It does not prove the screens look right on a phone.
+const fs=require('fs'),path=require('path');
+const html=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
+const code=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].pop()[1];
+const mk=()=>new Proxy(function(){},{get:(t,k)=>k===Symbol.toPrimitive?()=>'':k==='length'?0:['innerHTML','textContent','value','src'].includes(k)?'':k==='dataset'?{}:mk(),set:()=>true,apply:()=>mk()});
+const store={},ls={getItem:k=>store[k]??null,setItem:(k,v)=>{store[k]=v},removeItem:k=>{delete store[k]}};
+const win={addEventListener(){},matchMedia:()=>({matches:false,addEventListener(){}}),location:{hash:'',protocol:'https:'},scrollTo(){},innerWidth:400,navigator:{}};
+const tests=String.raw`
+;const R={};const T=(n,f)=>{try{const v=f();R[n]=(v===undefined?'ok':v);}catch(e){R[n]='FAIL: '+e.message;}};
+let app,kid,did,sp,o,addr;
+T('customer signup',()=>signUpWithOtp('Test User','9876543210').name);
+T('duplicate signup blocked',()=>{try{signUpWithOtp('X','9876543210');return 'NOT blocked'}catch(e){return 'blocked'}});
+T('customer login (existing)',()=>{signOut();return loginWithOtp('9876543210').name;});
+T('login unknown number blocked',()=>{try{loginWithOtp('9000000000');return 'NOT blocked'}catch(e){return 'blocked'}});
+T('staff login, no staff accounts',()=>{try{staffLogin('a@b.c','x','000000');return 'NOT blocked'}catch(e){return 'blocked'}});
+T('kitchen application submit',()=>{app=submitApplication(S.auth.user,'kitchen',{kitchenName:'Test Kitchen',capacity:20,dx:1,dy:1,area:'Test',diet:'veg',dishes:['dal-tadka','roti','rice','aloo-gobhi','bhindi']},{});return app.status;});
+T('kitchen activated',()=>{kid=activateKitchen(app);return 'kitchens='+Object.keys(S.kitchens).length+', dishes='+Object.values(S.kd).filter(x=>x.kid===kid).length;});
+T('nearby kitchens',()=>'n='+nearby().length);
+T('7-day menu plan',()=>'days='+wkPlan(kid).days.length);
+addr={lat:S.loc.lat,lng:S.loc.lng,label:'Home'};
+T('subscription (7-day basic)',()=>{sp=subscribe({tier:'basic',days:7,size:'full',slot:SLOTS[0],addr,pay:'upi'});return sp.sub.id+' price='+planPrice('basic',7,'full').total;});
+T('plan for tomorrow',()=>{const p=planTomorrow(sp.sub);return 'kitchen='+p.kid+', dishes='+p.dishes.join(',');});
+T('skip meal',()=>{subAction(sp.sub,'skip');return 'skipsUsed='+sp.sub.skipsUsed;});
+T('skip limit enforced (7-day: 1)',()=>{try{subAction(sp.sub,'skip');return 'NOT enforced'}catch(e){return 'enforced'}});
+T('pause blocked on 7-day',()=>{try{subAction(sp.sub,'pause');return 'NOT blocked'}catch(e){return 'blocked'}});
+T('extras pick saved',()=>{const ts=dayStart(Date.now())+864e5;pk(pkey(kid,ts)).roti=2;return JSON.stringify(wkCounts(kid,ts));});
+T('one-time order',()=>{did=Object.values(S.kd).find(x=>x.kid===kid).did;o=placeOrder({kid,did,size:'full',addr,pay:'upi'});return 'status='+o.status+', price='+o.price;});
+T('admin stats',()=>'orders='+adminStats().orders);
+{const k=CONFIG.firebase.apiKey;CONFIG.firebase.apiKey='';FB.ready=null;fbSend('9876543210').then(()=>console.log('OTP without Firebase settings: NOT rejected'),e=>console.log('OTP without Firebase settings ->',e.message));CONFIG.firebase.apiKey=k;}
+console.log(JSON.stringify(R,null,1));
+`;
+try{new Function('window','document','localStorage','navigator','location','history','setTimeout','setInterval','requestAnimationFrame','Intl',code+tests)(win,mk(),ls,{onLine:true,userAgent:''},win.location,{},()=>0,()=>0,()=>0,Intl)}catch(e){console.log('LOAD ERROR',e.message)}

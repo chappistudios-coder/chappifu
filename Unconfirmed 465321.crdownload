@@ -1,0 +1,57 @@
+// Extracted copy for reference. Live code is inside index.html (search "Supabase: settings").
+// Settings come from env.js (window.HIGHWAY_ENV). Only the PUBLISHABLE key is ever used in the browser.
+/* ---------- Supabase: settings, client, connection check. Uses ONLY the public publishable key. ---------- */
+const SB_ENV=(typeof window!=='undefined'&&window.HIGHWAY_ENV)||{};
+const SB={client:null};
+const SB_LIB='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.78.0/dist/umd/supabase.js';
+const SB_TABLES=['profiles','kitchens','kitchen_dishes','weekly_menus','meal_picks','subscriptions','orders','payments','applications'];
+function sbConfigured(){return /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(String(SB_ENV.SUPABASE_URL||''))&&/^sb_publishable_/.test(String(SB_ENV.SUPABASE_PUBLISHABLE_KEY||''));}
+function sbGuardKey(){const k=String(SB_ENV.SUPABASE_PUBLISHABLE_KEY||'');if(/^sb_secret_/.test(k)||/service_role/i.test(k))throw new Error('A secret key is in the page settings. Remove it. Only the publishable key may be used in the browser.');}
+function sbLoad(){
+  if(window.supabase&&window.supabase.createClient)return Promise.resolve();
+  return new Promise((ok,no)=>{const e=document.createElement('script');e.src=SB_LIB;e.onload=ok;e.onerror=()=>no(new Error('Could not load the Supabase library. Check your internet.'));document.head.appendChild(e);});
+}
+async function sbClient(){
+  sbGuardKey();
+  if(!sbConfigured())throw new Error('Supabase is not set up yet. Add SUPABASE_URL in env.js.');
+  if(SB.client)return SB.client;
+  await sbLoad();
+  SB.client=window.supabase.createClient(SB_ENV.SUPABASE_URL,SB_ENV.SUPABASE_PUBLISHABLE_KEY,{auth:{persistSession:true,autoRefreshToken:true}});
+  return SB.client;
+}
+async function sbCheck(){
+  const out=[],add=(name,ok,note)=>out.push({name,ok,note:note||''});
+  const url=String(SB_ENV.SUPABASE_URL||''),key=String(SB_ENV.SUPABASE_PUBLISHABLE_KEY||'');
+  try{sbGuardKey();add('No secret key in the page',true);}catch(e){add('No secret key in the page',false,e.message);return out;}
+  add('SUPABASE_URL is set and looks right',/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(url),url||'Missing. Add it in env.js.');
+  add('Publishable key is set',/^sb_publishable_/.test(key),key?key.slice(0,18)+'...':'Missing.');
+  if(!sbConfigured())return out;
+  try{
+    const r=await fetch(url.replace(/\/$/,'')+'/auth/v1/settings',{headers:{apikey:key}});
+    if(!r.ok)throw new Error('HTTP '+r.status+(r.status===401||r.status===403?' (the key was not accepted)':''));
+    const j=await r.json();add('Project reachable and key accepted',true);
+    const on=!!(j.external&&j.external.phone);add('Phone sign-in is turned on in Supabase',on,on?'':'Turn it on and add an SMS provider: Authentication > Sign In / Providers > Phone.');
+  }catch(e){add('Project reachable and key accepted',false,e.message);return out;}
+  let c;try{c=await sbClient();add('Supabase library loaded',true);}catch(e){add('Supabase library loaded',false,e.message);return out;}
+  for(const tb of SB_TABLES){
+    try{const {error}=await c.from(tb).select('*',{head:true,count:'exact'}).limit(1);
+      add('Table '+tb,!error,error?(error.code==='42P01'||error.code==='PGRST205'?'Missing. Run supabase/schema.sql.':error.message):'found');}
+    catch(e){add('Table '+tb,false,e.message);}
+  }
+  return out;
+}
+async function sbCheckPage(){
+  let box=document.getElementById('sbcheck');if(box)box.remove();
+  box=document.createElement('div');box.id='sbcheck';box.setAttribute('role','dialog');box.setAttribute('aria-label','Supabase connection check');
+  box.style.cssText='position:fixed;inset:0;z-index:9999;overflow:auto;background:#0B0527;color:#F4EEFF;padding:max(16px,env(safe-area-inset-top)) 16px 24px;font:15px/1.45 system-ui,sans-serif';
+  const add=(tag,text,css)=>{const e=document.createElement(tag);e.textContent=text;if(css)e.style.cssText=css;box.appendChild(e);return e;};
+  add('h2','Supabase connection check','margin:0 0 4px');add('p','Running...','margin:0 0 12px;opacity:.8');
+  document.body.appendChild(box);
+  let res;try{res=await sbCheck();}catch(e){res=[{name:'Check crashed',ok:false,note:e.message}];}
+  box.textContent='';add('h2','Supabase connection check','margin:0 0 12px');
+  res.forEach(r=>{const row=add('div','','padding:10px 12px;margin:0 0 8px;border-radius:12px;background:'+(r.ok?'rgba(60,200,120,.15)':'rgba(255,90,90,.18)'));
+    const a=document.createElement('b');a.textContent=(r.ok?'OK  ':'FIX  ')+r.name;row.appendChild(a);
+    if(r.note){const n=document.createElement('div');n.textContent=r.note;n.style.opacity='.85';row.appendChild(n);}});
+  const b1=add('button','Run again','margin:8px 8px 0 0;padding:10px 16px;border:0;border-radius:999px;background:#8B3DFF;color:#fff;font:inherit');b1.onclick=sbCheckPage;
+  const b2=add('button','Close','margin-top:8px;padding:10px 16px;border:0;border-radius:999px;background:#2A0E86;color:#fff;font:inherit');b2.onclick=()=>{box.remove();clearHash();};
+}
